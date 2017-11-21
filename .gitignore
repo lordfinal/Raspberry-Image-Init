@@ -5,3 +5,4 @@
 ./config/*.crt
 ./config/rasp-options.sh
 ./config/*_control
+./mounted/*
