@@ -3,18 +3,42 @@
 RESPBIAN_FILENAME=respbian.zip
 RESPBIAN_EXTRACT_DIR=./
 RESPBIAN_CONFIG_DIR=${RESPBIAN_EXTRACT_DIR}config
+OPTION_FILE=${RESPBIAN_CONFIG_DIR}/raspi-options.sh
+
 RESPBIAN_IMG_NAME=''
 RESPBIAN_MOUNT_DIR=./mounted
 BLOCK_SIZE=512
 RASPBIAN_SD_CARD=''
 RESPBIAN_HOSTNAME=bro-ids-first
-GITLAB_PRIVATE_TOKEN=ZhT8mxD9Z7WDTRwvq3gx
-GITLAB_HOST=192.168.1.253
+GITLAB_PRIVATE_TOKEN=
+GITLAB_HOST=
 EMULATION_QEMU_BINARY="qemu-system-arm"
 RESPBIAN_IMAGE_MIN_SIZE_MB=3900
 
+OPENVPN_CA_FILE=
+OPENVPN_CERT_FILE=
+OPENVPN_KEY_FILE=
+OPENVPN_CONFIG_FILE=
+OPENVPN_SERVICE_NAME=
+
 STAT_CMD=/usr/bin/stat
 FDISK_CMD=/sbin/fdisk
+CP=`which rsync | head -n1`
+
+if [-z "${CP}"]; then
+  CP="${CP} --progress "
+else
+  CP="cp "
+fi
+
+
+if [ -e "${OPTION_FILE}" ]; then
+  source ${OPTION_FILE}
+else
+  echo "Not option file at: ${OPTION_FILE}"
+fi
+
+exit 0
 
 function log () {
   if [[ $VERBOSE -eq 1 ]]; then
@@ -142,6 +166,44 @@ function manage_ssh_keys {
   echo "${MOD_RC_LOCAL}" | sudo tee ${RESPBIAN_MOUNT_DIR}/etc/ssh/sshd_config $1>/dev/null
 }
 
+function setup_openvpn_config {
+  if [ ! -e "${OPENVPN_CA_FILE}" ]; then
+    echo -e "\e[91mNo OPENVPN CA file at: ${OPENVPN_CA_FILE}\e[39m"
+    return 1
+  fi
+
+  if [ ! -e "${OPENVPN_CERT_FILE}" ]; then
+    echo -e "\e[91mNo OPENVPN CERT file at: ${OPENVPN_CERT_FILE}\e[39m"
+    return 1
+  fi
+
+  if [ ! -e "${OPENVPN_KEY_FILE}" ]; then
+    echo -e "\e[91mNo OPENVPN KEY file at: ${OPENVPN_KEY_FILE}\e[39m"
+    return 1
+  fi
+
+  if [ ! -e "${OPENVPN_CONFIG_FILE}" ]; then
+    echo -e "\e[91mNo OPENVPN CONFIG file at: ${OPENVPN_CONFIG_FILE}\e[39m"
+    return 1
+  fi
+
+  sudo $CP ${OPENVPN_CONFIG_FILE} ${RESPBIAN_MOUNT_DIR}/etc/openvpn/{OPENVPN_SERVICE_NAME}.conf
+  
+  sudo $CP ${OPENVPN_KEY_FILE} ${RESPBIAN_MOUNT_DIR}/etc/openvpn/
+  OPENVPN_KEY_FILE_NAME=`basename ${OPENVPN_KEY_FILE}`
+  sed -i -E "s/^key\s.*/key ${OPENVPN_KEY_FILE_NAME}/" ${RESPBIAN_MOUNT_DIR}/etc/openvpn/{OPENVPN_SERVICE_NAME}.conf
+  
+  sudo $CP ${OPENVPN_CERT_FILE} ${RESPBIAN_MOUNT_DIR}/etc/openvpn/
+  OPENVPN_CERT_FILE_NAME=`basename ${OPENVPN_CERT_FILE}`
+  sed -i -E "s/^cert\s.*/cert ${OPENVPN_CERT_FILE_NAME}/" ${RESPBIAN_MOUNT_DIR}/etc/openvpn/{OPENVPN_SERVICE_NAME}.conf
+  
+  sudo $CP ${OPENVPN_CA_FILE} ${RESPBIAN_MOUNT_DIR}/etc/openvpn/
+  OPENVPN_CA_FILE_NAME=`basename ${OPENVPN_CA_FILE}`
+  sed -i -E "s/^ca\s.*/ca ${OPENVPN_CA_FILE_NAME}/" ${RESPBIAN_MOUNT_DIR}/etc/openvpn/{OPENVPN_SERVICE_NAME}.conf
+
+  return 0
+}
+
 function copy_files_to_image {
   pushd ${RESPBIAN_MOUNT_DIR}/home/pi
   git clone https://github.com/travisfsmith/sweetsecurity
@@ -149,7 +211,8 @@ function copy_files_to_image {
   popd
   wait_for_newline
   manage_ssh_keys
-  
+  setup_openvpn_config
+
   log "Creating rc.local boot scripts"
   sudo bash -c "cat > ${RESPBIAN_MOUNT_DIR}/etc/init_configuration.sh <<EOF
     #!/bin/bash -e
@@ -164,13 +227,19 @@ function copy_files_to_image {
     #mount -t proc none /proc #remove for production
     #dhclient -i eth0 #remove for production
 
-    NEEDED_PACKAGES=( git openvpn python curl cmake g++ flex bison libpcap-dev libssl-dev python-dev python-pip python-flask python-scapy apache2 libapache2-mod-wsgi swig nmap tcpdump ant zip oracle-java8-jdk )
+    NEEDED_PACKAGES=( git openvpn python curl cmake g++ flex bison libpcap-dev libssl1.0-dev python-dev python-pip python-flask python-scapy apache2 libapache2-mod-wsgi swig nmap tcpdump ant zip oracle-java8-jdk )
+
+    NEEDED_PYTHON_PACKAGES=( elasticsearch requests flask-mail flask_wtf cryptography )
 
     function check_install_package {
       PKG_OK="'\$'"(dpkg-query -W --showformat='"'\${Status}'"\n' "'\$1'" | grep \"install ok installed\")
       if [ \"\" == \""'\$PKG_OK'"\" ]; then
         apt-get --force-yes --yes install "'\$1'"
       fi
+    }
+
+    function check_python_install_package {
+        pip install "'\$1'"
     }
 
     systemctl start ssh
@@ -195,15 +264,22 @@ function copy_files_to_image {
       check_install_package "'\$pkg'"
     done
     
+
+    for pkg in \""'\${NEEDED_PYTHON_PACKAGES[@]}'"\"; do
+      check_python_install_package "'\$pkg'"
+    done
+
     pushd /home/pi/bro
     ./configure
-    make
+    make -j4
     make install
     popd
 
     pushd /home/pi/sweetsecurity
     echo "2" | python setup.py
     popd
+
+    systemctl start openvpn@$OPENVPN_SERVICE_NAME.service
 
     exit 0
 EOF"
@@ -246,10 +322,12 @@ function flash_raspbian_image_to_sd {
          ;;
         *)
          echo "Invalid input..."
-         exit 1
          ;;
       esac
     done
+    echo "Running"
+    echo "sudo dd if=${RESPBIAN_IMG_NAME} of=${RASPBIAN_SD_CARD} bs=4M"
+    #test ob vars exist und sind richtig gefuellt 
     sudo dd if=${RESPBIAN_IMG_NAME} of=${RASPBIAN_SD_CARD} bs=4M
   fi
 }
