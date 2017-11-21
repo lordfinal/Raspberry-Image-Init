@@ -1,0 +1,7 @@
+./config/*.crt
+./config/*.key
+./config/*.ovpn
+./config/*.pub
+./config/*.crt
+./config/rasp-options.sh
+./config/*_control
