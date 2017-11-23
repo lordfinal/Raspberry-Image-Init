@@ -1,4 +1,4 @@
-*.crt
+*.csr
 *.key
 *.ovpn
 *.pub
