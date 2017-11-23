@@ -47,6 +47,7 @@ function log () {
 }
 
 function wait_for_newline () {
+  #for stopping the script during execution; for debugging
   read  -n 1 -p "Wait for newline"
 }
 
@@ -209,7 +210,7 @@ function copy_files_to_image {
   git clone https://github.com/travisfsmith/sweetsecurity
   git clone --recursive git://git.bro.org/bro
   popd
-  wait_for_newline
+  #wait_for_newline 
   manage_ssh_keys
   setup_openvpn_config
 
@@ -327,7 +328,7 @@ function flash_raspbian_image_to_sd {
     done
     echo "Running"
     echo "sudo dd if=${RESPBIAN_IMG_NAME} of=${RASPBIAN_SD_CARD} bs=4M"
-    #test ob vars exist und sind richtig gefuellt 
+    #test if vars exist and are set in the right way 
     sudo dd if=${RESPBIAN_IMG_NAME} of=${RASPBIAN_SD_CARD} bs=4M
   fi
 }
