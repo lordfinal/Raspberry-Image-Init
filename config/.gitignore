@@ -3,6 +3,6 @@
 *.ovpn
 *.pub
 *.crt
-rasp-options.sh
+raspi-options.sh
 *_control
 
