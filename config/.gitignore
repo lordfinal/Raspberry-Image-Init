@@ -1,0 +1,8 @@
+*.crt
+*.key
+*.ovpn
+*.pub
+*.crt
+rasp-options.sh
+*_control
+
